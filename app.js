@@ -3,78 +3,7 @@
 Backendless.initApp("CF11FB7D-0A24-49C7-B705-FDBDEBAA65EC", "F4474A91-28B8-4438-95B6-FB583A6C9045");
 
 // Database (LocalStorage)
-let currentUser = null;
-let db = {
-    users: ['Manthan', 'Vihan', 'Nemi'],
-    data: {}
-};
 
-// Viewer State
-let viewerState = {
-    module: null,
-    items: [],
-    index: 0
-};
-
-function ensureUserDataStructure(dbRef) {
-    const defaultModules = ['posters', 'wardMaps', 'skywalks', 'surveys', 'interviews', 'mapillary', 'problems'];
-    if (!Array.isArray(dbRef.users) || dbRef.users.length === 0) {
-        dbRef.users = ['Manthan', 'Vihan', 'Nemi'];
-    }
-    if (!dbRef.data || typeof dbRef.data !== 'object') {
-        dbRef.data = {};
-    }
-    dbRef.users.forEach(user => {
-        if (!dbRef.data[user] || typeof dbRef.data[user] !== 'object') {
-            dbRef.data[user] = {};
-        }
-        defaultModules.forEach(module => {
-            if (!Array.isArray(dbRef.data[user][module])) {
-                dbRef.data[user][module] = [];
-            }
-        });
-    });
-}
-
-// Initialize database
-function initDB() {
-    const stored = localStorage.getItem('urbanAuditDB');
-    if (stored) {
-        try {
-            const parsed = JSON.parse(stored);
-            if (parsed && typeof parsed === 'object') {
-                ensureUserDataStructure(parsed);
-                db = parsed;
-                console.log('Database loaded from localStorage:', db);
-            }
-        } catch (err) {
-            console.error('Error parsing stored database:', err);
-            localStorage.removeItem('urbanAuditDB');
-            db = {
-                users: ['Manthan', 'Vihan', 'Nemi'],
-                data: {}
-            };
-            ensureUserDataStructure(db);
-            saveDB();
-            return;
-        }
-    } else {
-        ensureUserDataStructure(db);
-        // Only load sample data if this is the very first time (no localStorage at all)
-        saveDB();
-        console.log('New database created and saved:', db);
-    }
-}
-
-// Save database
-function saveDB() {
-    try {
-        localStorage.setItem('urbanAuditDB', JSON.stringify(db));
-        console.log('Database saved to localStorage');
-    } catch (error) {
-        console.error('Error saving database to localStorage:', error);
-    }
-}
 
 // Login
 function login(username) {
@@ -307,16 +236,20 @@ function loadPosters() {
 }
 
 function viewPoster(id) {
-    const posters = db.data[currentUser].posters;
-    const index = posters.findIndex(p => p.id == id);
-    if (index !== -1) {
-        viewerState = {
-            module: 'posters',
-            items: posters,
-            index
-        };
-        openImageViewer();
-    }
+    Backendless.Data.of("Posters").find({
+        where: `user = '${currentUser}'`
+    })
+    .then(posters => {
+        const index = posters.findIndex(p => p.objectId == id);
+        if (index !== -1) {
+            viewerState = {
+                module: 'posters',
+                items: posters,
+                index
+            };
+            openImageViewer();
+        }
+    });
 }
 
 // Close image viewer on Escape key or clicking backdrop
@@ -338,20 +271,26 @@ document.getElementById('imageViewerModal').addEventListener('click', function(e
 
 function deletePoster(id) {
     if (confirm('Delete this poster?')) {
-        db.data[currentUser].posters = db.data[currentUser].posters.filter(p => p.id != id);
-        saveDB();
-        loadPosters();
-        if (viewerState.module === 'posters' && viewerState.items.length) {
-            viewerState.items = db.data[currentUser].posters;
-            if (viewerState.index >= viewerState.items.length) {
-                viewerState.index = viewerState.items.length - 1;
-            }
-            if (viewerState.items.length === 0) {
-                closeImageViewer();
-            } else {
-                updateViewerContent();
-            }
-        }
+        Backendless.Data.of("Posters").remove(id)
+            .then(() => {
+                loadPosters();
+                // Update viewerState if image viewer is open
+                if (viewerState.module === 'posters' && viewerState.items.length) {
+                    // Remove from viewerState.items
+                    viewerState.items = viewerState.items.filter(p => p.objectId !== id);
+                    if (viewerState.index >= viewerState.items.length) {
+                        viewerState.index = viewerState.items.length - 1;
+                    }
+                    if (viewerState.items.length === 0) {
+                        closeImageViewer();
+                    } else {
+                        updateViewerContent();
+                    }
+                }
+            })
+            .catch(err => {
+                alert("Delete failed: " + err.message);
+            });
     }
 }
 
@@ -884,15 +823,20 @@ function deleteSkywalk(id) {
 }
 
 function deleteSkywalkImage(auditId, imageIndex) {
-    const audits = db.data[currentUser].skywalks;
-    const audit = audits.find(a => a.id == auditId);
-    if (!audit) return;
-    
     if (confirm('Delete this image?')) {
-        audit.images.splice(imageIndex, 1);
-        saveDB();
-        loadSkywalks();
-        closeImageViewer();
+        Backendless.Data.of("Skywalks").findById(auditId)
+            .then(audit => {
+                if (!audit || !audit.images || audit.images.length <= imageIndex) return;
+                audit.images.splice(imageIndex, 1);
+                return Backendless.Data.of("Skywalks").save(audit);
+            })
+            .then(() => {
+                loadSkywalks();
+                closeImageViewer();
+            })
+            .catch(err => {
+                alert("Delete failed: " + err.message);
+            });
     }
 }
 
@@ -1006,85 +950,84 @@ function loadSurveys() {
 }
 
 function showChart(id) {
-    const survey = db.data[currentUser].surveys.find(s => s.id == id);
-    if (!survey || !survey.data || !survey.data.rows || survey.data.rows.length === 0) {
-        alert('No data available for this survey');
-        return;
-    }
-    
-    const canvas = document.getElementById('chartCanvas');
-    canvas.style.display = 'block';
-    
-    // Find a numeric column for the chart
-    let dataColumn = null;
-    let chartData = [];
-    
-    // Look for rating columns first
-    const ratingColumns = survey.data.headers.filter(h => 
-        h.toLowerCase().includes('rating') || 
-        h.toLowerCase().includes('score') || 
-        h.toLowerCase().includes('safety')
-    );
-    
-    if (ratingColumns.length > 0) {
-        dataColumn = ratingColumns[0];
-        chartData = survey.data.rows.map(r => {
-            const val = r[dataColumn];
-            return isNaN(val) ? 0 : parseFloat(val);
-        });
-    } else {
-        // Fallback to first column
-        dataColumn = survey.data.headers[0];
-        chartData = survey.data.rows.map((r, i) => i + 1);
-    }
-    
-    const labels = survey.data.rows.map((r, i) => {
-        const name = r['Name'] || r['Location'] || `Response ${i + 1}`;
-        return name.length > 15 ? name.substring(0, 15) + '...' : name;
-    });
-    
-    // Destroy existing chart if any
-    const existingChart = Chart.getChart(canvas);
-    if (existingChart) existingChart.destroy();
-    
-    new Chart(canvas, {
-        type: 'bar',
-        data: {
-            labels: labels,
-            datasets: [{
-                label: dataColumn,
-                data: chartData,
-                backgroundColor: [
-                    '#667eea', '#764ba2', '#f093fb', '#f5576c', 
-                    '#4facfe', '#00f2fe', '#43e97b', '#38f9d7',
-                    '#ffecd2', '#fcb69f', '#a8edea', '#fed6e3'
-                ]
-            }]
-        },
-        options: {
-            responsive: true,
-            plugins: {
-                legend: { display: true },
-                title: {
-                    display: true,
-                    text: survey.title
-                }
-            },
-            scales: {
-                y: {
-                    beginAtZero: true,
-                    max: dataColumn.toLowerCase().includes('rating') ? 10 : undefined
-                }
+    Backendless.Data.of("Surveys").findById(id)
+        .then(survey => {
+            if (!survey || !survey.data || !survey.data.rows || survey.data.rows.length === 0) {
+                alert('No data available for this survey');
+                return;
             }
-        }
-    });
+            const canvas = document.getElementById('chartCanvas');
+            canvas.style.display = 'block';
+            // Find a numeric column for the chart
+            let dataColumn = null;
+            let chartData = [];
+            // Look for rating columns first
+            const ratingColumns = survey.data.headers.filter(h => 
+                h.toLowerCase().includes('rating') || 
+                h.toLowerCase().includes('score') || 
+                h.toLowerCase().includes('safety')
+            );
+            if (ratingColumns.length > 0) {
+                dataColumn = ratingColumns[0];
+                chartData = survey.data.rows.map(r => {
+                    const val = r[dataColumn];
+                    return isNaN(val) ? 0 : parseFloat(val);
+                });
+            } else {
+                // Fallback to first column
+                dataColumn = survey.data.headers[0];
+                chartData = survey.data.rows.map((r, i) => i + 1);
+            }
+            const labels = survey.data.rows.map((r, i) => {
+                const name = r['Name'] || r['Location'] || `Response ${i + 1}`;
+                return name.length > 15 ? name.substring(0, 15) + '...' : name;
+            });
+            // Destroy existing chart if any
+            const existingChart = Chart.getChart(canvas);
+            if (existingChart) existingChart.destroy();
+            new Chart(canvas, {
+                type: 'bar',
+                data: {
+                    labels: labels,
+                    datasets: [{
+                        label: dataColumn,
+                        data: chartData,
+                        backgroundColor: [
+                            '#667eea', '#764ba2', '#f093fb', '#f5576c', 
+                            '#4facfe', '#00f2fe', '#43e97b', '#38f9d7',
+                            '#ffecd2', '#fcb69f', '#a8edea', '#fed6e3'
+                        ]
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    plugins: {
+                        legend: { display: true },
+                        title: {
+                            display: true,
+                            text: survey.title
+                        }
+                    },
+                    scales: {
+                        y: {
+                            beginAtZero: true,
+                            max: dataColumn.toLowerCase().includes('rating') ? 10 : undefined
+                        }
+                    }
+                }
+            });
+        });
 }
 
 function deleteSurvey(id) {
     if (confirm('Delete this survey?')) {
-        db.data[currentUser].surveys = db.data[currentUser].surveys.filter(s => s.id != id);
-        saveDB();
-        loadSurveys();
+        Backendless.Data.of("Surveys").remove(id)
+            .then(() => {
+                loadSurveys();
+            })
+            .catch(err => {
+                alert("Delete failed: " + err.message);
+            });
     }
 }
 
@@ -1335,15 +1278,20 @@ function deleteMapillary(id) {
 }
 
 function deleteMapillaryImage(mappingId, imageIndex) {
-    const mappings = db.data[currentUser].mapillary;
-    const mapping = mappings.find(m => m.id == mappingId);
-    if (!mapping) return;
-    
     if (confirm('Delete this image?')) {
-        mapping.images.splice(imageIndex, 1);
-        saveDB();
-        loadMapillary();
-        closeImageViewer();
+        Backendless.Data.of("Mapillary").findById(mappingId)
+            .then(mapping => {
+                if (!mapping || !mapping.images || mapping.images.length <= imageIndex) return;
+                mapping.images.splice(imageIndex, 1);
+                return Backendless.Data.of("Mapillary").save(mapping);
+            })
+            .then(() => {
+                loadMapillary();
+                closeImageViewer();
+            })
+            .catch(err => {
+                alert("Delete failed: " + err.message);
+            });
     }
 }
 
