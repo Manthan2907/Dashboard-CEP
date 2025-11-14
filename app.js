@@ -1,3 +1,7 @@
+// === Backendless Initialization ===
+// Replace with your actual APP ID and API KEY from Backendless console
+Backendless.initApp("F4474A91-28B8-4438-95B6-FB583A6C9045", "F4474A91-28B8-4438-95B6-FB583A6C9045");
+
 // Database (LocalStorage)
 let currentUser = null;
 let db = {
@@ -226,80 +230,82 @@ function closePosterModal() {
 
 document.getElementById('posterForm').addEventListener('submit', function(e) {
     e.preventDefault();
-    
     const title = document.getElementById('posterTitle').value;
     const desc = document.getElementById('posterDesc').value;
     const files = document.getElementById('posterFile').files;
-    
     if (files.length === 0) {
         alert('Please select at least one image.');
         return;
     }
-    
     let processed = 0;
-    
     Array.from(files).forEach((file, index) => {
-        const reader = new FileReader();
-        reader.onload = function(e) {
-            const poster = {
-                id: Date.now() + index,
-                title: files.length > 1 ? `${title} (${index + 1})` : title,
-                description: desc,
-                image: e.target.result,
-                date: new Date().toLocaleDateString()
-            };
-            
-            db.data[currentUser].posters.push(poster);
-            processed++;
-            
-            if (processed === files.length) {
-                saveDB();
-                loadPosters();
-                closePosterModal();
-                document.getElementById('posterForm').reset();
-            }
-        };
-        reader.readAsDataURL(file);
+        // Upload each file to Backendless Files
+        Backendless.Files.upload(file, "posters/")
+            .then(result => {
+                // Save poster metadata to Backendless Data
+                const poster = {
+                    title: files.length > 1 ? `${title} (${index + 1})` : title,
+                    description: desc,
+                    image: result.fileURL,
+                    date: new Date().toLocaleDateString(),
+                    user: currentUser
+                };
+                return Backendless.Data.of("Posters").save(poster);
+            })
+            .then(() => {
+                processed++;
+                if (processed === files.length) {
+                    closePosterModal();
+                    loadPosters();
+                    document.getElementById('posterForm').reset();
+                }
+            })
+            .catch(err => {
+                alert("Upload failed: " + err.message);
+            });
     });
 });
 
 function loadPosters() {
     const grid = document.getElementById('posterGrid');
-    const posters = db.data[currentUser].posters;
-    
     grid.innerHTML = '';
-    
-    if (posters.length === 0) {
-        grid.innerHTML = `
-            <div class="empty-state" style="grid-column: 1/-1;">
-                <div class="empty-state-icon">📸</div>
-                <h3>No Posters Yet</h3>
-                <p>Upload your first poster to get started</p>
-                <button class="btn-primary" onclick="openPosterModal()">+ Upload Poster</button>
-            </div>
-        `;
-        return;
-    }
-    
-    posters.forEach(poster => {
-        const card = document.createElement('div');
-        card.className = 'card';
-        
-        card.innerHTML = `
-            <div style="position:relative; margin-bottom:1rem;">
-                <img src="${poster.image}" style="width:100%; height:180px; object-fit:cover; border-radius:0.5rem; cursor:pointer;" onclick="viewPoster('${poster.id}')">
-                <div style="position:absolute; top:0.5rem; right:0.5rem; display:flex; gap:0.5rem;">
-                    <button class="btn-icon" onclick="viewPoster('${poster.id}')" title="View Full Size">👁️</button>
-                    <button class="btn-icon delete" onclick="deletePoster('${poster.id}')" title="Delete">🗑️</button>
+    Backendless.Data.of("Posters").find({
+        where: `user = '${currentUser}'`
+    })
+    .then(posters => {
+        if (!posters.length) {
+            grid.innerHTML = `
+                <div class="empty-state" style="grid-column: 1/-1;">
+                    <div class="empty-state-icon">📸</div>
+                    <h3>No Posters Yet</h3>
+                    <p>Upload your first poster to get started</p>
+                    <button class="btn-primary" onclick="openPosterModal()">+ Upload Poster</button>
                 </div>
-            </div>
-            <div class="card-title">${poster.title}</div>
-            <div class="card-desc">${poster.description || 'No description'}</div>
-            <div class="card-meta">
-                <span class="stat-badge">📅 ${poster.date}</span>
-            </div>
-        `;
-        grid.appendChild(card);
+            `;
+            return;
+        }
+        posters.forEach(poster => {
+            const card = document.createElement('div');
+            card.className = 'card';
+            card.innerHTML = `
+                <div style="position:relative; margin-bottom:1rem;">
+                    <img src="${poster.image}" style="width:100%; height:180px; object-fit:cover; border-radius:0.5rem; cursor:pointer;" onclick="viewPoster('${poster.objectId}')">
+                    <div style="position:absolute; top:0.5rem; right:0.5rem; display:flex; gap:0.5rem;">
+                        <button class="btn-icon" onclick="viewPoster('${poster.objectId}')" title="View Full Size">👁️</button>
+                        <button class="btn-icon delete" onclick="deletePoster('${poster.objectId}')" title="Delete">🗑️</button>
+                    </div>
+                </div>
+                <div class="card-title">${poster.title}</div>
+                <div class="card-desc">${poster.description || 'No description'}</div>
+                <div class="card-meta">
+                    <span class="stat-badge">📅 ${poster.date}</span>
+                </div>
+            `;
+            grid.appendChild(card);
+        });
+    })
+    .catch(err => {
+        grid.innerHTML = `<div class='error'>Failed to load posters: ${err.message}</div>`;
     });
 }
 
@@ -367,101 +373,116 @@ function closeWardMapModal() {
 
 document.getElementById('wardMapForm').addEventListener('submit', function(e) {
     e.preventDefault();
-    
     const title = document.getElementById('mapTitle').value.trim();
     const url = document.getElementById('mapUrl').value.trim();
     const fileInput = document.getElementById('mapFile');
     const file = fileInput.files[0];
     const description = document.getElementById('mapDesc').value;
-    
     if (!url && !file) {
-        alert('Please provide a map URL or upload a KMQ file.');
+        alert('Please provide a map URL or upload a KML/KMZ file.');
         return;
     }
-    
     const baseMap = {
-        id: Date.now(),
         title: title,
         url: url || null,
         description: description,
         date: new Date().toLocaleDateString(),
         fileName: null,
-        fileData: null,
-        fileType: null
+        fileUrl: null,
+        fileType: null,
+        user: currentUser
     };
-    
-    const saveMap = (mapData) => {
-        db.data[currentUser].wardMaps.push(mapData);
-        saveDB();
-        loadWardMaps();
-        closeWardMapModal();
-    };
-    
     if (file) {
         const ext = file.name.split('.').pop().toLowerCase();
         const fileType = ext === 'kmz' ? 'KMZ' : 'KML';
-        const reader = new FileReader();
-        reader.onload = function(event) {
-            saveMap({
-                ...baseMap,
-                fileName: file.name,
-                fileData: event.target.result,
-                fileType: fileType
+        Backendless.Files.upload(file, "wardmaps/")
+            .then(result => {
+                const mapData = {
+                    ...baseMap,
+                    fileName: file.name,
+                    fileUrl: result.fileURL,
+                    fileType: fileType
+                };
+                return Backendless.Data.of("WardMaps").save(mapData);
+            })
+            .then(() => {
+                loadWardMaps();
+                closeWardMapModal();
+                document.getElementById('wardMapForm').reset();
+            })
+            .catch(err => {
+                alert("Upload failed: " + err.message);
             });
-        };
-        reader.readAsDataURL(file);
     } else {
-        saveMap(baseMap);
+        Backendless.Data.of("WardMaps").save(baseMap)
+            .then(() => {
+                loadWardMaps();
+                closeWardMapModal();
+                document.getElementById('wardMapForm').reset();
+            })
+            .catch(err => {
+                alert("Save failed: " + err.message);
+            });
     }
 });
 
 function loadWardMaps() {
     const list = document.getElementById('wardMapList');
-    const maps = db.data[currentUser].wardMaps;
-    
     list.innerHTML = '';
-    maps.forEach(map => {
-        const card = document.createElement('div');
-        card.className = 'card';
-        const urlSection = map.url ? `<div class="card-desc" style="color:#667eea;">${map.url}</div>` : '';
-        const fileSection = map.fileName ? `<div class="card-desc">File: ${map.fileName} (${map.fileType})</div>` : '';
-        const openButton = map.url ? `<button class="btn-small btn-view" onclick="window.open('${map.url}', '_blank')">Open Map</button>` : '';
-        const downloadButton = map.fileData ? `<button class="btn-small btn-view" onclick="downloadWardMapFile('${map.id}')">Download ${map.fileType}</button>` : '';
-        const viewDetailsButton = (map.fileName && (map.fileType === 'KML' || map.fileType === 'KMZ')) ? `<button class="btn-small btn-view" onclick="viewMapDetails('${map.id}')">View Details</button>` : '';
-        
-        card.innerHTML = `
-            <div class="card-title">🗺️ ${map.title}</div>
-            <div class="card-desc">${map.description}</div>
-            ${urlSection}
-            ${fileSection}
-            <div class="card-actions">
-                ${openButton}
-                ${viewDetailsButton}
-                ${downloadButton}
-                <button class="btn-small btn-delete" onclick="deleteWardMap('${map.id}')">Delete</button>
-            </div>
-        `;
-        list.appendChild(card);
+    Backendless.Data.of("WardMaps").find({
+        where: `user = '${currentUser}'`
+    })
+    .then(maps => {
+        maps.forEach(map => {
+            const card = document.createElement('div');
+            card.className = 'card';
+            const urlSection = map.url ? `<div class="card-desc" style="color:#667eea;">${map.url}</div>` : '';
+            const fileSection = map.fileName ? `<div class="card-desc">File: ${map.fileName} (${map.fileType})</div>` : '';
+            const openButton = map.url ? `<button class="btn-small btn-view" onclick="window.open('${map.url}', '_blank')">Open Map</button>` : '';
+            const downloadButton = map.fileUrl ? `<button class="btn-small btn-view" onclick="downloadWardMapFile('${map.objectId}')">Download ${map.fileType}</button>` : '';
+            const viewDetailsButton = (map.fileName && (map.fileType === 'KML' || map.fileType === 'KMZ')) ? `<button class="btn-small btn-view" onclick="viewMapDetails('${map.objectId}')">View Details</button>` : '';
+            card.innerHTML = `
+                <div class="card-title">🗺️ ${map.title}</div>
+                <div class="card-desc">${map.description}</div>
+                ${urlSection}
+                ${fileSection}
+                <div class="card-actions">
+                    ${openButton}
+                    ${viewDetailsButton}
+                    ${downloadButton}
+                    <button class="btn-small btn-delete" onclick="deleteWardMap('${map.objectId}')">Delete</button>
+                </div>
+            `;
+            list.appendChild(card);
+        });
+    })
+    .catch(err => {
+        list.innerHTML = `<div class='error'>Failed to load ward maps: ${err.message}</div>`;
     });
 }
 
 function downloadWardMapFile(id) {
-    const maps = db.data[currentUser].wardMaps;
-    const map = maps.find(m => m.id == id);
-    if (!map || !map.fileData) return;
-    const link = document.createElement('a');
-    link.href = map.fileData;
-    link.download = map.fileName || 'ward-map.kmz';
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
+    Backendless.Data.of("WardMaps").findById(id)
+        .then(map => {
+            if (!map || !map.fileUrl) return;
+            const link = document.createElement('a');
+            link.href = map.fileUrl;
+            link.download = map.fileName || 'ward-map.kmz';
+            document.body.appendChild(link);
+            link.click();
+            link.remove();
+        });
 }
 
 function deleteWardMap(id) {
     if (confirm('Delete this map?')) {
-        db.data[currentUser].wardMaps = db.data[currentUser].wardMaps.filter(m => m.id != id);
-        saveDB();
-        loadWardMaps();
+        Backendless.Data.of("WardMaps").remove(id)
+            .then(() => {
+                loadWardMaps();
+            })
+            .catch(err => {
+                alert("Delete failed: " + err.message);
+            });
     }
 }
 
@@ -753,108 +774,115 @@ function closeSkywalkModal() {
 
 document.getElementById('skywalkForm').addEventListener('submit', function(e) {
     e.preventDefault();
-    
     const title = document.getElementById('skywalkTitle').value;
     const desc = document.getElementById('skywalkDesc').value;
     const files = document.getElementById('skywalkFiles').files;
-    
-    const images = [];
-    let processed = 0;
-    
     if (files.length === 0) {
         alert('Please select at least one image.');
         return;
     }
-    
+    let uploadedImages = [];
+    let processed = 0;
     Array.from(files).forEach((file, index) => {
-        const reader = new FileReader();
-        reader.onload = function(e) {
-            images.push(e.target.result);
-            processed++;
-            
-            if (processed === files.length) {
-                const audit = {
-                    id: Date.now(),
-                    title: title,
-                    description: desc,
-                    images: images,
-                    date: new Date().toLocaleDateString()
-                };
-                
-                db.data[currentUser].skywalks.push(audit);
-                saveDB();
-                loadSkywalks();
-                closeSkywalkModal();
-                document.getElementById('skywalkForm').reset();
-            }
-        };
-        reader.readAsDataURL(file);
+        Backendless.Files.upload(file, "skywalks/")
+            .then(result => {
+                uploadedImages.push(result.fileURL);
+                processed++;
+                if (processed === files.length) {
+                    const audit = {
+                        title: title,
+                        description: desc,
+                        images: uploadedImages,
+                        date: new Date().toLocaleDateString(),
+                        user: currentUser
+                    };
+                    Backendless.Data.of("Skywalks").save(audit)
+                        .then(() => {
+                            loadSkywalks();
+                            closeSkywalkModal();
+                            document.getElementById('skywalkForm').reset();
+                        })
+                        .catch(err => {
+                            alert("Save failed: " + err.message);
+                        });
+                }
+            })
+            .catch(err => {
+                alert("Upload failed: " + err.message);
+            });
     });
 });
 
 function loadSkywalks() {
     const list = document.getElementById('skywalkList');
-    const audits = db.data[currentUser].skywalks;
-    
     list.innerHTML = '';
-    audits.forEach(audit => {
-        const card = document.createElement('div');
-        card.className = 'card';
-        
-        // Create image gallery
-        let galleryHTML = '';
-        if (audit.images && audit.images.length > 0) {
-            galleryHTML = '<div class="image-gallery">';
-            for (let i = 0; i < Math.min(audit.images.length, 4); i++) {
-                galleryHTML += `
-                    <div style="margin-bottom: 1rem;">
-                        <img src="${audit.images[i]}" class="gallery-image" onclick="viewSkywalkImage('${audit.id}', ${i})">
-                    </div>
-                `;
+    Backendless.Data.of("Skywalks").find({
+        where: `user = '${currentUser}'`
+    })
+    .then(audits => {
+        audits.forEach(audit => {
+            const card = document.createElement('div');
+            card.className = 'card';
+            // Create image gallery
+            let galleryHTML = '';
+            if (audit.images && audit.images.length > 0) {
+                galleryHTML = '<div class="image-gallery">';
+                for (let i = 0; i < Math.min(audit.images.length, 4); i++) {
+                    galleryHTML += `
+                        <div style="margin-bottom: 1rem;">
+                            <img src="${audit.images[i]}" class="gallery-image" onclick="viewSkywalkImage('${audit.objectId}', ${i})">
+                        </div>
+                    `;
+                }
+                galleryHTML += '</div>';
             }
-            galleryHTML += '</div>';
-        }
-        
-        card.innerHTML = `
-            <div class="card-title">🏗️ ${audit.title}</div>
-            <div class="card-desc">${audit.description}</div>
-            <div class="card-desc">${audit.images.length} images</div>
-            ${galleryHTML}
-            <div class="card-actions" style="margin-top:1rem;">
-                <button class="btn-small btn-delete" onclick="deleteSkywalk('${audit.id}')">Delete Audit</button>
-            </div>
-        `;
-        list.appendChild(card);
+            card.innerHTML = `
+                <div class="card-title">🏗️ ${audit.title}</div>
+                <div class="card-desc">${audit.description}</div>
+                <div class="card-desc">${audit.images.length} images</div>
+                ${galleryHTML}
+                <div class="card-actions" style="margin-top:1rem;">
+                    <button class="btn-small btn-delete" onclick="deleteSkywalk('${audit.objectId}')">Delete Audit</button>
+                </div>
+            `;
+            list.appendChild(card);
+        });
+    })
+    .catch(err => {
+        list.innerHTML = `<div class='error'>Failed to load skywalk audits: ${err.message}</div>`;
     });
 }
 
 function viewSkywalkImage(auditId, imageIndex) {
-    const audits = db.data[currentUser].skywalks;
-    const audit = audits.find(a => a.id == auditId);
-    if (!audit) return;
-    
-    const items = audit.images.map((img, idx) => ({
-        id: `${auditId}-${idx}`,
-        title: audit.title,
-        description: audit.description,
-        image: img,
-        date: audit.date,
-        type: 'skywalk'
-    }));
-    
-    viewerState = {
-        module: 'skywalk',
-        items: items,
-        index: imageIndex
-    };
-    openImageViewer();
+    Backendless.Data.of("Skywalks").findById(auditId)
+        .then(audit => {
+            if (!audit) return;
+            const items = audit.images.map((img, idx) => ({
+                id: `${auditId}-${idx}`,
+                title: audit.title,
+                description: audit.description,
+                image: img,
+                date: audit.date,
+                type: 'skywalk'
+            }));
+            viewerState = {
+                module: 'skywalk',
+                items: items,
+                index: imageIndex
+            };
+            openImageViewer();
+        });
 }
 
 function deleteSkywalk(id) {
     if (confirm('Delete this entire audit?')) {
-        db.data[currentUser].skywalks = db.data[currentUser].skywalks.filter(a => a.id != id);
-        saveDB();
-        loadSkywalks();
+        Backendless.Data.of("Skywalks").remove(id)
+            .then(() => {
+                loadSkywalks();
+            })
+            .catch(err => {
+                alert("Delete failed: " + err.message);
+            });
     }
 }
 
@@ -886,33 +914,37 @@ function closeSurveyModal() {
 
 document.getElementById('surveyForm').addEventListener('submit', function(e) {
     e.preventDefault();
-    
     const title = document.getElementById('surveyTitle').value;
     const file = document.getElementById('surveyFile').files[0];
-    
-    const reader = new FileReader();
-    reader.onload = function(e) {
-        try {
-            const csvData = e.target.result;
-            const parsedData = parseCSV(csvData);
-            
-            const survey = {
-                id: Date.now(),
-                title: title,
-                data: parsedData,
-                date: new Date().toLocaleDateString()
-            };
-            
-            db.data[currentUser].surveys.push(survey);
-            saveDB();
+    if (!file) {
+        alert('Please select a CSV file.');
+        return;
+    }
+    Backendless.Files.upload(file, "surveys/")
+        .then(result => {
+            // Download the file and parse CSV in browser
+            return fetch(result.fileURL)
+                .then(res => res.text())
+                .then(csvData => {
+                    const parsedData = parseCSV(csvData);
+                    const survey = {
+                        title: title,
+                        data: parsedData,
+                        date: new Date().toLocaleDateString(),
+                        fileUrl: result.fileURL,
+                        user: currentUser
+                    };
+                    return Backendless.Data.of("Surveys").save(survey);
+                });
+        })
+        .then(() => {
             loadSurveys();
             closeSurveyModal();
-        } catch (err) {
-            alert('Failed to parse CSV. Please check format.');
-            console.error(err);
-        }
-    };
-    reader.readAsText(file);
+            document.getElementById('surveyForm').reset();
+        })
+        .catch(err => {
+            alert('Failed to upload or parse CSV: ' + err.message);
+        });
 });
 
 function parseCSV(csv) {
@@ -934,43 +966,45 @@ function parseCSV(csv) {
 
 function loadSurveys() {
     const list = document.getElementById('surveyList');
-    const surveys = db.data[currentUser].surveys;
-    
     list.innerHTML = '';
-    
-    if (surveys.length === 0) {
-        list.innerHTML = `
-            <div class="empty-state">
-                <div class="empty-state-icon">📊</div>
-                <h3>No Surveys Yet</h3>
-                <p>Upload your first CSV survey to get started</p>
-                <button class="btn-primary" onclick="openSurveyModal()">+ Upload Survey</button>
-            </div>
-        `;
-        return;
-    }
-    
-    surveys.forEach(survey => {
-        const card = document.createElement('div');
-        card.className = 'card';
-        
-        // Check if survey has proper data structure
-        const rowCount = survey.data && survey.data.rows ? survey.data.rows.length : 0;
-        const headers = survey.data && survey.data.headers ? survey.data.headers : [];
-        
-        card.innerHTML = `
-            <div class="card-title">📊 ${survey.title}</div>
-            <div class="card-desc">${rowCount} responses</div>
-            <div class="card-desc">Columns: ${headers.slice(0, 3).join(', ')}${headers.length > 3 ? '...' : ''}</div>
-            <div class="card-meta">
-                <span class="stat-badge">📅 ${survey.date}</span>
-            </div>
-            <div class="card-actions">
-                <button class="btn-small btn-view" onclick="showChart('${survey.id}')">View Chart</button>
-                <button class="btn-small btn-delete" onclick="deleteSurvey('${survey.id}')">Delete</button>
-            </div>
-        `;
-        list.appendChild(card);
+    Backendless.Data.of("Surveys").find({
+        where: `user = '${currentUser}'`
+    })
+    .then(surveys => {
+        if (!surveys.length) {
+            list.innerHTML = `
+                <div class="empty-state">
+                    <div class="empty-state-icon">📊</div>
+                    <h3>No Surveys Yet</h3>
+                    <p>Upload your first CSV survey to get started</p>
+                    <button class="btn-primary" onclick="openSurveyModal()">+ Upload Survey</button>
+                </div>
+            `;
+            return;
+        }
+        surveys.forEach(survey => {
+            const card = document.createElement('div');
+            card.className = 'card';
+            // Check if survey has proper data structure
+            const rowCount = survey.data && survey.data.rows ? survey.data.rows.length : 0;
+            const headers = survey.data && survey.data.headers ? survey.data.headers : [];
+            card.innerHTML = `
+                <div class="card-title">📊 ${survey.title}</div>
+                <div class="card-desc">${rowCount} responses</div>
+                <div class="card-desc">Columns: ${headers.slice(0, 3).join(', ')}${headers.length > 3 ? '...' : ''}</div>
+                <div class="card-meta">
+                    <span class="stat-badge">📅 ${survey.date}</span>
+                </div>
+                <div class="card-actions">
+                    <button class="btn-small btn-view" onclick="showChart('${survey.objectId}')">View Chart</button>
+                    <button class="btn-small btn-delete" onclick="deleteSurvey('${survey.objectId}')">Delete</button>
+                </div>
+            `;
+            list.appendChild(card);
+        });
+    })
+    .catch(err => {
+        list.innerHTML = `<div class='error'>Failed to load surveys: ${err.message}</div>`;
     });
 }
 
@@ -1072,114 +1106,111 @@ function closeInterviewModal() {
 
 document.getElementById('interviewForm').addEventListener('submit', function(e) {
     e.preventDefault();
-    
     const title = document.getElementById('interviewTitle').value;
     const desc = document.getElementById('interviewDesc').value;
     const files = document.getElementById('interviewFile').files;
-    
     if (files.length === 0) {
         alert('Please select at least one audio or video file.');
         return;
     }
-    
     let processed = 0;
-    
     Array.from(files).forEach((file, index) => {
         if (!file.type.startsWith('audio/') && !file.type.startsWith('video/')) {
             alert(`File ${file.name} is not an audio or video file. Skipping.`);
             processed++;
-            if (processed === files.length) {
-                finishInterviewUpload();
-            }
             return;
         }
-        
-        const reader = new FileReader();
-        reader.onload = function(e) {
-            const interview = {
-                id: Date.now() + index,
-                title: files.length > 1 ? `${title} (${index + 1})` : title,
-                description: desc,
-                media: e.target.result,
-                type: file.type.startsWith('video/') ? 'video' : 'audio',
-                date: new Date().toLocaleDateString()
-            };
-            
-            db.data[currentUser].interviews.push(interview);
-            processed++;
-            
-            if (processed === files.length) {
-                finishInterviewUpload();
-            }
-        };
-        reader.readAsDataURL(file);
+        Backendless.Files.upload(file, "interviews/")
+            .then(result => {
+                const interview = {
+                    title: files.length > 1 ? `${title} (${index + 1})` : title,
+                    description: desc,
+                    media: result.fileURL,
+                    type: file.type.startsWith('video/') ? 'video' : 'audio',
+                    date: new Date().toLocaleDateString(),
+                    user: currentUser
+                };
+                return Backendless.Data.of("Interviews").save(interview);
+            })
+            .then(() => {
+                processed++;
+                if (processed === files.length) {
+                    loadInterviews();
+                    closeInterviewModal();
+                    document.getElementById('interviewForm').reset();
+                }
+            })
+            .catch(err => {
+                alert("Upload failed: " + err.message);
+            });
     });
-    
-    function finishInterviewUpload() {
-        saveDB();
-        loadInterviews();
-        closeInterviewModal();
-        document.getElementById('interviewForm').reset();
-    }
 });
 
 function loadInterviews() {
     const list = document.getElementById('interviewList');
-    const interviews = db.data[currentUser].interviews;
-    
     list.innerHTML = '';
-    interviews.forEach(interview => {
-        const card = document.createElement('div');
-        card.className = 'card';
-        card.innerHTML = `
-            <div class="card-title">${interview.type === 'video' ? '🎥' : '🎤'} ${interview.title}</div>
-            <div class="card-desc">${interview.description}</div>
-            <div class="card-actions">
-                <button class="btn-small btn-view" onclick="playMedia('${interview.id}')">Play</button>
-                <button class="btn-small btn-delete" onclick="deleteInterview('${interview.id}')">Delete</button>
-            </div>
-        `;
-        list.appendChild(card);
+    Backendless.Data.of("Interviews").find({
+        where: `user = '${currentUser}'`
+    })
+    .then(interviews => {
+        interviews.forEach(interview => {
+            const card = document.createElement('div');
+            card.className = 'card';
+            card.innerHTML = `
+                <div class="card-title">${interview.type === 'video' ? '🎥' : '🎤'} ${interview.title}</div>
+                <div class="card-desc">${interview.description}</div>
+                <div class="card-actions">
+                    <button class="btn-small btn-view" onclick="playMedia('${interview.objectId}')">Play</button>
+                    <button class="btn-small btn-delete" onclick="deleteInterview('${interview.objectId}')">Delete</button>
+                </div>
+            `;
+            list.appendChild(card);
+        });
+    })
+    .catch(err => {
+        list.innerHTML = `<div class='error'>Failed to load interviews: ${err.message}</div>`;
     });
 }
 
 function playMedia(id) {
-    const interview = db.data[currentUser].interviews.find(i => i.id == id);
-    if (!interview) return;
-    
-    const player = document.getElementById('audioPlayer');
-    const title = document.getElementById('audioTitle');
-    
-    // Clean up previous media
-    const audioEl = document.getElementById('audioElement');
-    const videoEl = document.getElementById('videoElement');
-    if (videoEl) videoEl.remove();
-    
-    if (interview.type === 'video') {
-        const video = document.createElement('video');
-        video.id = 'videoElement';
-        video.controls = true;
-        video.style.width = '100%';
-        video.style.marginBottom = '1rem';
-        video.src = interview.media;
-        player.insertBefore(video, audioEl);
-        audioEl.style.display = 'none';
-        video.play();
-    } else {
-        audioEl.style.display = 'block';
-        audioEl.src = interview.media;
-        audioEl.play();
-    }
-    
-    player.style.display = 'block';
-    title.textContent = interview.title;
+    Backendless.Data.of("Interviews").findById(id)
+        .then(interview => {
+            if (!interview) return;
+            const player = document.getElementById('audioPlayer');
+            const title = document.getElementById('audioTitle');
+            // Clean up previous media
+            const audioEl = document.getElementById('audioElement');
+            const videoEl = document.getElementById('videoElement');
+            if (videoEl) videoEl.remove();
+            if (interview.type === 'video') {
+                const video = document.createElement('video');
+                video.id = 'videoElement';
+                video.controls = true;
+                video.style.width = '100%';
+                video.style.marginBottom = '1rem';
+                video.src = interview.media;
+                player.insertBefore(video, audioEl);
+                audioEl.style.display = 'none';
+                video.play();
+            } else {
+                audioEl.style.display = 'block';
+                audioEl.src = interview.media;
+                audioEl.play();
+            }
+            player.style.display = 'block';
+            title.textContent = interview.title;
+        });
 }
 
 function deleteInterview(id) {
     if (confirm('Delete this media?')) {
-        db.data[currentUser].interviews = db.data[currentUser].interviews.filter(i => i.id != id);
-        saveDB();
-        loadInterviews();
+        Backendless.Data.of("Interviews").remove(id)
+            .then(() => {
+                loadInterviews();
+            })
+            .catch(err => {
+                alert("Delete failed: " + err.message);
+            });
     }
 }
 
@@ -1198,99 +1229,111 @@ function closeMapillaryModal() {
 
 document.getElementById('mapillaryForm').addEventListener('submit', function(e) {
     e.preventDefault();
-    
     const title = document.getElementById('mapillaryTitle').value;
     const url = document.getElementById('mapillaryUrl').value;
     const files = document.getElementById('mapillaryImages').files;
-    
-    const images = [];
+    let uploadedImages = [];
     let processed = 0;
-    
     const saveMapping = (imgs) => {
         const mapping = {
-            id: Date.now(),
             title: title,
             url: url,
             images: imgs,
-            date: new Date().toLocaleDateString()
+            date: new Date().toLocaleDateString(),
+            user: currentUser
         };
-        db.data[currentUser].mapillary.push(mapping);
-        saveDB();
-        loadMapillary();
-        closeMapillaryModal();
+        Backendless.Data.of("Mapillary").save(mapping)
+            .then(() => {
+                loadMapillary();
+                closeMapillaryModal();
+                document.getElementById('mapillaryForm').reset();
+            })
+            .catch(err => {
+                alert("Save failed: " + err.message);
+            });
     };
-    
     if (files.length === 0) {
         saveMapping([]);
     } else {
         Array.from(files).forEach(file => {
-            const reader = new FileReader();
-            reader.onload = function(e) {
-                images.push(e.target.result);
-                processed++;
-                if (processed === files.length) {
-                    saveMapping(images);
-                }
-            };
-            reader.readAsDataURL(file);
+            Backendless.Files.upload(file, "mapillary/")
+                .then(result => {
+                    uploadedImages.push(result.fileURL);
+                    processed++;
+                    if (processed === files.length) {
+                        saveMapping(uploadedImages);
+                    }
+                })
+                .catch(err => {
+                    alert("Upload failed: " + err.message);
+                });
         });
     }
 });
 
 function loadMapillary() {
     const list = document.getElementById('mapillaryList');
-    const mappings = db.data[currentUser].mapillary;
-    
     list.innerHTML = '';
-    mappings.forEach(mapping => {
-        const card = document.createElement('div');
-        card.className = 'card';
-        card.innerHTML = `
-            <div class="card-title">📍 ${mapping.title}</div>
-            <div class="card-desc" style="color:#667eea;">${mapping.url}</div>
-            ${mapping.images.length > 0 ? `
-                <div class="image-gallery">
-                    ${mapping.images.map((img, idx) => 
-                        `<img src="${img}" class="gallery-image" onclick="viewMapillaryImage('${mapping.id}', ${idx})">`
-                    ).join('')}
+    Backendless.Data.of("Mapillary").find({
+        where: `user = '${currentUser}'`
+    })
+    .then(mappings => {
+        mappings.forEach(mapping => {
+            const card = document.createElement('div');
+            card.className = 'card';
+            card.innerHTML = `
+                <div class="card-title">📍 ${mapping.title}</div>
+                <div class="card-desc" style="color:#667eea;">${mapping.url}</div>
+                ${mapping.images.length > 0 ? `
+                    <div class="image-gallery">
+                        ${mapping.images.map((img, idx) => 
+                            `<img src="${img}" class="gallery-image" onclick="viewMapillaryImage('${mapping.objectId}', ${idx})">`
+                        ).join('')}
+                    </div>
+                ` : ''}
+                <div class="card-actions" style="margin-top:1rem;">
+                    <button class="btn-small btn-view" onclick="window.open('${mapping.url}', '_blank')">Open Mapillary</button>
+                    <button class="btn-small btn-delete" onclick="deleteMapillary('${mapping.objectId}')">Delete</button>
                 </div>
-            ` : ''}
-            <div class="card-actions" style="margin-top:1rem;">
-                <button class="btn-small btn-view" onclick="window.open('${mapping.url}', '_blank')">Open Mapillary</button>
-                <button class="btn-small btn-delete" onclick="deleteMapillary('${mapping.id}')">Delete</button>
-            </div>
-        `;
-        list.appendChild(card);
+            `;
+            list.appendChild(card);
+        });
+    })
+    .catch(err => {
+        list.innerHTML = `<div class='error'>Failed to load mapillary mappings: ${err.message}</div>`;
     });
 }
 
 function viewMapillaryImage(mappingId, imageIndex) {
-    const mappings = db.data[currentUser].mapillary;
-    const mapping = mappings.find(m => m.id == mappingId);
-    if (!mapping || !mapping.images.length) return;
-    
-    const items = mapping.images.map((img, idx) => ({
-        id: `${mappingId}-${idx}`,
-        title: mapping.title,
-        description: '',
-        image: img,
-        date: mapping.date,
-        type: 'mapillary'
-    }));
-    
-    viewerState = {
-        module: 'mapillary',
-        items: items,
-        index: imageIndex
-    };
-    openImageViewer();
+    Backendless.Data.of("Mapillary").findById(mappingId)
+        .then(mapping => {
+            if (!mapping || !mapping.images.length) return;
+            const items = mapping.images.map((img, idx) => ({
+                id: `${mappingId}-${idx}`,
+                title: mapping.title,
+                description: '',
+                image: img,
+                date: mapping.date,
+                type: 'mapillary'
+            }));
+            viewerState = {
+                module: 'mapillary',
+                items: items,
+                index: imageIndex
+            };
+            openImageViewer();
+        });
 }
 
 function deleteMapillary(id) {
     if (confirm('Delete this mapping?')) {
-        db.data[currentUser].mapillary = db.data[currentUser].mapillary.filter(m => m.id != id);
-        saveDB();
-        loadMapillary();
+        Backendless.Data.of("Mapillary").remove(id)
+            .then(() => {
+                loadMapillary();
+            })
+            .catch(err => {
+                alert("Delete failed: " + err.message);
+            });
     }
 }
 
@@ -1322,51 +1365,64 @@ function closeProblemModal() {
 
 document.getElementById('problemForm').addEventListener('submit', function(e) {
     e.preventDefault();
-    
     const problem = {
-        id: Date.now(),
         title: document.getElementById('problemTitle').value,
         url: document.getElementById('problemUrl').value,
         description: document.getElementById('problemDesc').value,
         tags: document.getElementById('problemTags').value.split(',').map(t => t.trim()).filter(t => t),
-        date: new Date().toLocaleDateString()
+        date: new Date().toLocaleDateString(),
+        user: currentUser
     };
-    
-    db.data[currentUser].problems.push(problem);
-    saveDB();
-    loadProblems();
-    closeProblemModal();
+    Backendless.Data.of("Problems").save(problem)
+        .then(() => {
+            loadProblems();
+            closeProblemModal();
+            document.getElementById('problemForm').reset();
+        })
+        .catch(err => {
+            alert("Save failed: " + err.message);
+        });
 });
 
 function loadProblems() {
     const list = document.getElementById('problemList');
-    const problems = db.data[currentUser].problems;
-    
     list.innerHTML = '';
-    problems.forEach(problem => {
-        const card = document.createElement('div');
-        card.className = 'card';
-        card.innerHTML = `
-            <div class="card-title">💻 ${problem.title}</div>
-            <div class="card-desc">${problem.description}</div>
-            <div style="margin: 0.5rem 0;">
-                ${problem.tags.map(tag => `<span class="tag">${tag}</span>`).join('')}
-            </div>
-            <div class="card-desc" style="color:#667eea;">${problem.url}</div>
-            <div class="card-actions">
-                <button class="btn-small btn-view" onclick="window.open('${problem.url}', '_blank')">View Solution</button>
-                <button class="btn-small btn-delete" onclick="deleteProblem('${problem.id}')">Delete</button>
-            </div>
-        `;
-        list.appendChild(card);
+    Backendless.Data.of("Problems").find({
+        where: `user = '${currentUser}'`
+    })
+    .then(problems => {
+        problems.forEach(problem => {
+            const card = document.createElement('div');
+            card.className = 'card';
+            card.innerHTML = `
+                <div class="card-title">💻 ${problem.title}</div>
+                <div class="card-desc">${problem.description}</div>
+                <div style="margin: 0.5rem 0;">
+                    ${problem.tags.map(tag => `<span class="tag">${tag}</span>`).join('')}
+                </div>
+                <div class="card-desc" style="color:#667eea;">${problem.url}</div>
+                <div class="card-actions">
+                    <button class="btn-small btn-view" onclick="window.open('${problem.url}', '_blank')">View Solution</button>
+                    <button class="btn-small btn-delete" onclick="deleteProblem('${problem.objectId}')">Delete</button>
+                </div>
+            `;
+            list.appendChild(card);
+        });
+    })
+    .catch(err => {
+        list.innerHTML = `<div class='error'>Failed to load problems: ${err.message}</div>`;
     });
 }
 
 function deleteProblem(id) {
     if (confirm('Delete this solution?')) {
-        db.data[currentUser].problems = db.data[currentUser].problems.filter(p => p.id != id);
-        saveDB();
-        loadProblems();
+        Backendless.Data.of("Problems").remove(id)
+            .then(() => {
+                loadProblems();
+            })
+            .catch(err => {
+                alert("Delete failed: " + err.message);
+            });
     }
 }
 
