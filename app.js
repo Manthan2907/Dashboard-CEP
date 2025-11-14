@@ -1,6 +1,6 @@
 // === Backendless Initialization ===
 // Replace with your actual APP ID and API KEY from Backendless console
-Backendless.initApp("F4474A91-28B8-4438-95B6-FB583A6C9045", "F4474A91-28B8-4438-95B6-FB583A6C9045");
+Backendless.initApp("CF11FB7D-0A24-49C7-B705-FDBDEBAA65EC", "F4474A91-28B8-4438-95B6-FB583A6C9045");
 
 // Database (LocalStorage)
 let currentUser = null;
