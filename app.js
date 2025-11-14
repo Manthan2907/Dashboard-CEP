@@ -61,9 +61,6 @@ function initDB() {
     } else {
         ensureUserDataStructure(db);
         // Only load sample data if this is the very first time (no localStorage at all)
-        if (typeof loadSampleData === 'function') {
-            loadSampleData();
-        }
         saveDB();
         console.log('New database created and saved:', db);
     }
